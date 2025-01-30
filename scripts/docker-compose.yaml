@@ -1,0 +1,43 @@
+services:
+
+  mongo:
+    image: mongo
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME_FILE: /run/secrets/db_root_username
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MONGO_INITDB_DATABASE: focusbuddy
+    secrets:
+      - db_root_password
+      - db_root_username
+    ports:
+      - 27017:27017
+    networks:
+      - backend
+    volumes:
+      - db_data:/data/db
+      - ./init/init-db.js:/docker-entrypoint-initdb.d/init-db.js
+
+  mongo-express:
+    image: mongo-express
+    restart: always
+    ports:
+      - 8081:8081
+    env_file:
+      - .env
+    networks:
+      - frontend
+      - backend
+
+secrets:
+  db_root_password:
+    file: db_password.txt
+  db_root_username:
+    file: db_username.txt
+
+networks:
+  backend:
+  frontend:
+  
+volumes:
+  db_data:
