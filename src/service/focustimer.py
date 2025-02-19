@@ -22,18 +22,9 @@ class FocusTimerService(object):
     def add_focus_session(self, user_id: str, session_status: SessionStatus, start_date: str, start_time: str, duration: int, break_duration: int, session_type: SessionType, remaining_focus_time: int, remaining_break_time: int) -> (str, bool):
         """Add focus timer."""
         collection = self.db.get_collection("focus_timer")
-        nextSession = self.get_next_focus_session(user_id)
-        if nextSession:
-            # Convert start times to seconds since midnight
-            proposed_start_time_seconds = self._time_to_seconds(start_time)
-            proposed_end_time_seconds = proposed_start_time_seconds + duration * 60 + break_duration * 60
-            
-            next_session_start_time_seconds = self._time_to_seconds(nextSession.start_time)
-            next_session_end_time_seconds = next_session_start_time_seconds + nextSession.duration * 60 + nextSession.break_duration * 60
-            
-            # Check if there is a time conflict
-            if (proposed_start_time_seconds < next_session_end_time_seconds) and (proposed_end_time_seconds > next_session_start_time_seconds):
-                return "", False  # Conflict: the proposed session overlaps with the next session
+        if self.is_time_conflict_with_all_sessions(user_id, start_date, start_time, duration, break_duration):
+            print("Time conflict detected, cannot add session!")
+            return "", False  # Conflict: another session overlaps with this one
 
         query = {
             "user_id": user_id,
@@ -57,11 +48,22 @@ class FocusTimerService(object):
         if not updates:
             return False
         
+        session = collection.find_one({"user_id": user_id, "_id": ObjectId(session_id)})
+        if not session:
+            return False
+        
+        start_date = updates.get("start_date", session["start_date"])
+        start_time = updates.get("start_time", session["start_time"])
+        duration = updates.get("duration", session["duration"])
+        break_duration = updates.get("break_duration", session["break_duration"])
+
+        if self.is_time_conflict_with_all_sessions(user_id, start_date, start_time, duration, break_duration, exclude_session_id=session_id):
+            return "conflict"  # Conflict: another session overlaps with this one
+        
         if "session_status" in updates:
             updates["session_status"] = updates["session_status"].value
         if "session_type" in updates:
             updates["session_type"] = updates["session_type"].value
-        
 
         result = collection.update_one({"user_id": user_id, "_id": ObjectId(session_id)}, {"$set": updates})
         return result.modified_count > 0
@@ -110,3 +112,49 @@ class FocusTimerService(object):
 
         return focus_sessions
 
+    def _is_previous_day(self, date1: str, date2: str) -> bool:
+        from datetime import datetime, timedelta
+        date1_obj = datetime.strptime(date1, "%m/%d/%Y")
+        date2_obj = datetime.strptime(date2, "%m/%d/%Y")
+        return date1_obj + timedelta(days=1) == date2_obj
+
+
+    def is_time_conflict_with_all_sessions(self, user_id: str, start_date: str, start_time: str, duration: int, break_duration: int, exclude_session_id: str = None) -> bool:
+
+        collection = self.db.get_collection("focus_timer")
+
+        query = {"user_id": user_id}
+        if exclude_session_id:
+            query["_id"] = {"$ne": ObjectId(exclude_session_id)}
+
+        all_sessions = list(collection.find(query))
+
+        proposed_start_time_seconds = self._time_to_seconds(start_time)
+        proposed_end_time_seconds = proposed_start_time_seconds + (duration + break_duration) * 60
+   
+        for session in all_sessions:
+            session_start_date = session["start_date"] 
+            session_start_time = session["start_time"] 
+            session_duration = session["duration"]
+            session_break_duration = session["break_duration"]
+
+            session_start_time_seconds = self._time_to_seconds(session_start_time)
+            session_end_time_seconds = session_start_time_seconds + (session_duration + session_break_duration) * 60
+
+            if session_start_date == start_date:
+                if (proposed_start_time_seconds < session_end_time_seconds) and (proposed_end_time_seconds > session_start_time_seconds):
+                    return True
+                
+            elif self._is_previous_day(session_start_date, start_date):
+                if session_end_time_seconds > 86400:
+                    adjusted_end_time_seconds = session_end_time_seconds % 86400
+                    if proposed_start_time_seconds < adjusted_end_time_seconds:
+                        return True  
+
+            elif self._is_previous_day(start_date, session_start_date):
+                if proposed_end_time_seconds > 86400: 
+                    adjusted_proposed_end_time = proposed_end_time_seconds % 86400
+                    if adjusted_proposed_end_time > session_start_time_seconds:
+                        return True  
+
+        return False  

@@ -3,10 +3,8 @@
 import datetime
 import re
 from typing import Annotated
-
 from bson import ObjectId
 from fastapi import APIRouter, FastAPI, HTTPException, Response, status, Header
-
 from src.api import (
     AddBlockListRequest,
     AnalyticsListResponse,
@@ -34,8 +32,9 @@ from src.rest.error import (
     FOCUSSESSION_NOT_FOUND,
     USERSTATUS_NOT_UPDATED
 )
-from src.service import AnalyticsListService, BlockListService, FocusTimerService
+
 from src.service.user import UserService
+from src.service import BlockListService, FocusTimerService, AnalyticsListService
 
 
 class BaseAPI:
@@ -134,6 +133,7 @@ class BlockListAPI(BaseAPI):
             r"(\/[^\s]*)?$"  # Optional path (e.g., /path/to/page)
         )
         return url_regex.match(domain)
+
 
 class UserAPI(BaseAPI):
     """class to encapsulate the user API endpoints."""
@@ -263,8 +263,11 @@ class FocusTimerAPI(BaseAPI):
         if not updates:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FOCUSSESSION_NOT_UPDATED)
         
-        ok = self.timer_service.modify_focus_session(user_id, session_id, **updates)
-        if not ok:
+        result = self.timer_service.modify_focus_session(user_id, session_id, **updates)
+
+        if result == "conflict":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=FOCUSSESSION_CONFLICT)
+        if not result:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=FOCUSSESSION_NOT_UPDATED)
         return EditFocusSessionResponse(user_id=user_id, id=session_id, status=ResponseStatus.SUCCESS)
     
@@ -298,13 +301,13 @@ class FocusTimerAPI(BaseAPI):
 def create_app(cfg: Config):
     _app = FastAPI()
     blocklist_api = BlockListAPI(cfg)
-    analyticslist_api = AnalyticsListAPI(cfg)
     focustimer_api = FocusTimerAPI(cfg)
     _app.include_router(focustimer_api.router, prefix=api_version)
     _app.include_router(blocklist_api.router, prefix=api_version)
+    analyticslist_api = AnalyticsListAPI(cfg)
+    _app.include_router(analyticslist_api.router, prefix=api_version)
     user_api = UserAPI(cfg)
     _app.include_router(user_api.router, prefix=api_version)
-    _app.include_router(analyticslist_api.router, prefix=api_version)
     return _app
 
 

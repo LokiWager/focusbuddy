@@ -134,26 +134,64 @@ class TestFocusTimer(unittest.TestCase):
 
     def test_update_focus_timer(self):
         collection = self.db.get_collection("focus_timer")
-        # Insert a test entry
+
         test_entry = {
             "user_id": self.user_id,
             "session_status": SessionStatus.UPCOMING,
             "start_date": "02/22/2025",
-            "start_time": "23:16:15",
-            "duration": 1,
-            "break_duration": 1,
+            "start_time": "23:00:00",
+            "duration": 30,
+            "break_duration": 5,
             "session_type": SessionType.WORK,
-            "remaining_focus_time": 60,
-            "remaining_break_time": 60
+            "remaining_focus_time": 1800,
+            "remaining_break_time": 300
         }
         inserted_id = collection.insert_one(test_entry).inserted_id
 
-        # Update the entry without specifying fields to update
+        # Case 1: 400 Bad Request
         response = self.app.put(f"/api/v1/focustimer/{str(inserted_id)}", json={}, headers={"x-auth-token": self.jwt_token})
         assert response.status_code == 400
 
-        # Update the entry with specified fields
-        response = self.app.put(f"/api/v1/focustimer/{str(inserted_id)}", json={"session_type": SessionStatus.ONGOING}, headers={"x-auth-token": self.jwt_token})
+        # Case 2: 200 OK
+        response = self.app.put(
+            f"/api/v1/focustimer/{str(inserted_id)}",
+            json={"session_type": SessionType.PERSONAL},
+            headers={"x-auth-token": self.jwt_token}
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "user_id": self.user_id,
+            "id": str(inserted_id),
+            "status": ResponseStatus.SUCCESS,
+        }
+
+        # Case 3: 409 Conflict
+        conflict_entry = {
+            "user_id": self.user_id,
+            "session_status": SessionStatus.UPCOMING,
+            "start_date": "02/22/2025",
+            "start_time": "23:25:00",
+            "duration": 30,
+            "break_duration": 5,
+            "session_type": SessionType.STUDY,
+            "remaining_focus_time": 1800,
+            "remaining_break_time": 300
+        }
+        conflict_id = collection.insert_one(conflict_entry).inserted_id
+
+        response = self.app.put(
+            f"/api/v1/focustimer/{str(conflict_id)}",
+            json={"start_time": "23:10:00"},
+            headers={"x-auth-token": self.jwt_token}
+        )
+        assert response.status_code == 409  
+
+        # Case 4: 200 OK
+        response = self.app.put(
+            f"/api/v1/focustimer/{str(inserted_id)}",
+            json={"start_time": "22:00:00"},
+            headers={"x-auth-token": self.jwt_token}
+        )
         assert response.status_code == 200
         assert response.json() == {
             "user_id": self.user_id,
